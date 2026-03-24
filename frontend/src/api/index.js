@@ -24,13 +24,17 @@ service.interceptors.request.use(
 service.interceptors.response.use(
   response => {
     const res = response.data
-    
+
+    // 将 HTTP 状态码附加到响应对象上，方便前端处理
+    res.status = response.status
+
     // 如果返回的状态码不是success，则抛出错误
-    if (!res.success && res.success !== undefined) {
+    // 但对于 404 状态码（任务不存在），允许前端处理
+    if (!res.success && res.success !== undefined && response.status !== 404) {
       console.error('API Error:', res.error || res.message || 'Unknown error')
       return Promise.reject(new Error(res.error || res.message || 'Error'))
     }
-    
+
     return res
   },
   error => {

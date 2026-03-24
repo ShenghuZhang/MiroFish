@@ -430,15 +430,28 @@ class SimulationConfigGenerator:
         
         return "\n".join(lines)
     
-    def _call_llm_with_retry(self, prompt: str, system_prompt: str) -> Dict[str, Any]:
-        """带重试的LLM调用，包含JSON修复逻辑"""
+    def _call_llm_with_retry(
+        self,
+        prompt: str,
+        system_prompt: str,
+        progress_callback: Optional[Callable[[str, float], None]] = None,
+        operation_name: str = "LLM调用"
+    ) -> Dict[str, Any]:
+        """带重试的LLM调用，包含JSON修复逻辑和进度报告"""
         import re
-        
+        import time
+
         max_attempts = 3
         last_error = None
-        
+
         for attempt in range(max_attempts):
             try:
+                if progress_callback:
+                    progress_callback("calling_llm", (attempt / max_attempts) * 50)
+
+                logger.info(f"LLM调用开始: {operation_name} (尝试 {attempt+1}/{max_attempts}), model={self.model_name}")
+                start_time = time.time()
+
                 response = self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
@@ -449,34 +462,43 @@ class SimulationConfigGenerator:
                     temperature=0.7 - (attempt * 0.1)  # 每次重试降低温度
                     # 不设置max_tokens，让LLM自由发挥
                 )
-                
+
+                elapsed = time.time() - start_time
+                logger.info(f"LLM调用成功: {operation_name} (尝试 {attempt+1}/{max_attempts}), 耗时: {elapsed:.2f}秒")
+
+                if progress_callback:
+                    progress_callback("llm_success", 100)
+
                 content = response.choices[0].message.content
                 finish_reason = response.choices[0].finish_reason
-                
+
                 # 检查是否被截断
                 if finish_reason == 'length':
                     logger.warning(f"LLM输出被截断 (attempt {attempt+1})")
                     content = self._fix_truncated_json(content)
-                
+
                 # 尝试解析JSON
                 try:
                     return json.loads(content)
                 except json.JSONDecodeError as e:
                     logger.warning(f"JSON解析失败 (attempt {attempt+1}): {str(e)[:80]}")
-                    
+
                     # 尝试修复JSON
                     fixed = self._try_fix_config_json(content)
                     if fixed:
+                        logger.info(f"JSON修复成功 (尝试 {attempt+1})")
                         return fixed
-                    
+
                     last_error = e
-                    
+
             except Exception as e:
-                logger.warning(f"LLM调用失败 (attempt {attempt+1}): {str(e)[:80]}")
+                elapsed = time.time() - start_time if 'start_time' in locals() else 0
+                logger.warning(f"LLM调用失败: {operation_name} (尝试 {attempt+1}), 错误: {str(e)[:80]}, 已耗时: {elapsed:.2f}秒")
                 last_error = e
-                import time
+                if progress_callback:
+                    progress_callback("llm_error", (attempt + 1) / max_attempts * 100)
                 time.sleep(2 * (attempt + 1))
-        
+
         raise last_error or Exception("LLM调用失败")
     
     def _fix_truncated_json(self, content: str) -> str:
@@ -585,9 +607,17 @@ class SimulationConfigGenerator:
 - reasoning (string): 简要说明为什么这样配置"""
 
         system_prompt = "你是社交媒体模拟专家。返回纯JSON格式，时间配置需符合中国人作息习惯。"
-        
+
+        def progress_callback_wrapper(stage, pct):
+            logger.info(f"时间配置生成进度: {stage} {pct}%")
+
         try:
-            return self._call_llm_with_retry(prompt, system_prompt)
+            return self._call_llm_with_retry(
+                prompt,
+                system_prompt,
+                progress_callback=progress_callback_wrapper,
+                operation_name="生成时间配置"
+            )
         except Exception as e:
             logger.warning(f"时间配置LLM生成失败: {e}, 使用默认配置")
             return self._get_default_time_config(num_entities)
@@ -701,11 +731,27 @@ class SimulationConfigGenerator:
 }}"""
 
         system_prompt = "你是舆论分析专家。返回纯JSON格式。注意 poster_type 必须精确匹配可用实体类型。"
-        
+
+        logger.info(f"生成事件配置配置LLM调用，上下文长度: {len(context_truncated)}, 实体数: {len(entities)}")
+        logger.debug(f"Prompt: {prompt[:500]}..." if len(prompt) > 500 else prompt)
+
+        def progress_callback_wrapper(stage, pct):
+            logger.info(f"事件配置生成进度: {stage} {pct}%")
+
         try:
-            return self._call_llm_with_retry(prompt, system_prompt)
+            result = self._call_llm_with_retry(
+                prompt,
+                system_prompt,
+                progress_callback=progress_callback_wrapper,
+                operation_name="生成事件配置"
+            )
+            logger.info(f"事件配置LLM返回成功, initial_posts数量: {len(result.get('initial_posts', []))}")
+            logger.debug(f"返回内容预览: {str(result)[:500]}..." if len(str(result)) > 500 else str(result))
+            return result
         except Exception as e:
-            logger.warning(f"事件配置LLM生成失败: {e}, 使用默认配置")
+            logger.error(f"事件配置LLM生成失败: {e}", exc_info=True)
+            logger.warning(f"事件配置LLM生成失败，使用默认配置")
+            logger.warning(f"错误类型: {type(e).__name__}, 错误详情: {str(e)[:200]}")
             return {
                 "hot_topics": [],
                 "narrative_direction": "",
@@ -864,9 +910,19 @@ class SimulationConfigGenerator:
 }}"""
 
         system_prompt = "你是社交媒体行为分析专家。返回纯JSON，配置需符合中国人作息习惯。"
-        
+
+        logger.info(f"Agent批次LLM调用: 批次 {start_idx+1}-{start_idx+len(entities)}, 实体数: {len(entities)}")
+
+        def progress_callback_wrapper(stage, pct):
+            logger.info(f"Agent配置生成进度 (批次 {start_idx+1}-{start_idx+len(entities)}): {stage} {pct}%")
+
         try:
-            result = self._call_llm_with_retry(prompt, system_prompt)
+            result = self._call_llm_with_retry(
+                prompt,
+                system_prompt,
+                progress_callback=progress_callback_wrapper,
+                operation_name=f"Agent配置批次({start_idx+1}-{start_idx+len(entities)})"
+            )
             llm_configs = {cfg["agent_id"]: cfg for cfg in result.get("agent_configs", [])}
         except Exception as e:
             logger.warning(f"Agent配置批次LLM生成失败: {e}, 使用规则生成")

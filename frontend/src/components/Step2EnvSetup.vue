@@ -845,24 +845,24 @@ const stopProfilesPolling = () => {
 
 const pollPrepareStatus = async () => {
   if (!taskId.value && !props.simulationId) return
-  
+
   try {
     const res = await getPrepareStatus({
       task_id: taskId.value,
       simulation_id: props.simulationId
     })
-    
+
     if (res.success && res.data) {
       const data = res.data
-      
+
       // 更新进度
       prepareProgress.value = data.progress || 0
       progressMessage.value = data.message || ''
-      
+
       // 解析阶段信息并输出详细日志
       if (data.progress_detail) {
         currentStage.value = data.progress_detail.current_stage_name || ''
-        
+
         // 输出详细进度日志（避免重复）
         const detail = data.progress_detail
         const logKey = `${detail.current_stage}-${detail.current_item}-${detail.total_items}`
@@ -887,7 +887,7 @@ const pollPrepareStatus = async () => {
           addLog(data.message)
         }
       }
-      
+
       // 检查是否完成
       if (data.status === 'completed' || data.status === 'ready' || data.already_prepared) {
         addLog('✓ 准备工作已完成')
@@ -899,9 +899,46 @@ const pollPrepareStatus = async () => {
         stopPolling()
         stopProfilesPolling()
       }
+    } else if (res.status === 404) {
+      // 404错误表示任务不存在，可能由于Flask开发服务器重启导致内存任务丢失
+      // 尝试检查模拟是否已经准备好
+      console.warn('任务不存在(404)，检查模拟是否已准备好:', res.error)
+      addLog(`ℹ 任务状态丢失(可能因服务重启)，检查模拟是否已完成...`)
+
+      try {
+        // 重新请求，只使用simulation_id检查
+        const checkRes = await getPrepareStatus({
+          simulation_id: props.simulationId
+        })
+
+        if (checkRes.success && checkRes.data && (checkRes.data.status === 'ready' || checkRes.data.already_prepared)) {
+          addLog('✓ 模拟已经准备好，加载已完成的数据')
+          stopPolling()
+          stopProfilesPolling()
+          await loadPreparedData()
+        } else if (checkRes.status === 404) {
+          // 模拟也不存在
+          addLog(`✗ 模拟不存在或未准备: ${checkRes.error || '未知错误'}`)
+          stopPolling()
+          stopProfilesPolling()
+        }
+      } catch (checkErr) {
+        console.warn('检查模拟状态失败:', checkErr)
+        // 暂时不停止轮询，让用户可以继续尝试
+      }
+    } else if (res.status >= 400 && res.status < 500) {
+      // 其他客户端错误
+      addLog(`✗ 请求错误 (${res.status}): ${res.error || '未知错误'}`)
+      stopPolling()
+      stopProfilesPolling()
     }
   } catch (err) {
     console.warn('轮询状态失败:', err)
+    // 网络错误时暂时不停止轮询，继续尝试
+    if (err.response?.status === 404) {
+      // HTTP 404错误已经在上面处理，这里只是记录
+      addLog(`ℹ 网络请求失败: 404 Not Found`)
+    }
   }
 }
 

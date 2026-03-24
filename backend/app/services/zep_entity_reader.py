@@ -7,11 +7,10 @@ import time
 from typing import Dict, Any, List, Optional, Set, Callable, TypeVar
 from dataclasses import dataclass, field
 
-from zep_cloud.client import Zep
-
+from .graphiti_wrapper import Zep, GraphitiNode as ZepNode, GraphitiEdge as ZepEdge
+from ..utils.zep_paging import fetch_all_nodes, fetch_all_edges
 from ..config import Config
 from ..utils.logger import get_logger
-from ..utils.zep_paging import fetch_all_nodes, fetch_all_edges
 
 logger = get_logger('mirofish.zep_entity_reader')
 
@@ -79,11 +78,9 @@ class ZepEntityReader:
     """
     
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or Config.ZEP_API_KEY
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY 未配置")
-        
-        self.client = Zep(api_key=self.api_key)
+ # Graphiti 使用 Neo4j 配置，不再需要 ZEP_API_KEY
+        # 兼容性：保持构造函数签名，但忽略 api_key 参数
+        self.client = Zep()
     
     def _call_with_retry(
         self, 
