@@ -31,6 +31,7 @@ from graphiti_core.search.search_config_recipes import (
     EDGE_HYBRID_SEARCH_CROSS_ENCODER,
     NODE_HYBRID_SEARCH_CROSS_ENCODER
 )
+from graphiti_core.utils.maintenance.graph_data_operations import build_indices_and_constraints
 
 from ..config import Config
 
@@ -280,6 +281,8 @@ class GraphitiClient:
                     embedder=self.embedder,
                     cross_encoder=cross_encoder
                 )
+                # Create required indices and constraints for Graphiti
+                run_async(build_indices_and_constraints(self._graphiti.driver))
                 self._initialized = True
             return self._graphiti
 
