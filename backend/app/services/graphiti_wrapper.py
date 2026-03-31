@@ -386,17 +386,22 @@ class GraphitiClient:
         Returns:
             包含节点和边的 Episode 数据
         """
+        import logging
+        import time
+        logger = logging.getLogger(__name__)
+        start_time = time.time()
+
         graphiti = self._get_graphiti()
 
         # 使用当前时间作为 reference_time
         reference_time = datetime.now()
 
         # 调用 Graphiti 的 add_episode 方法
-        import logging
-        logger = logging.getLogger(__name__)
         logger.debug(f"graph_add called with entity_types: {entity_types is not None}")
         if entity_types:
             logger.debug(f"  entity_types keys: {list(entity_types.keys())}")
+
+        episode_start = time.time()
         result = run_async(graphiti.add_episode(
             name="Episode",
             episode_body=data,
@@ -405,6 +410,8 @@ class GraphitiClient:
             group_id=graph_id,
             entity_types=entity_types
         ))
+        episode_time = time.time() - episode_start
+        logger.info(f"graph_add: add_episode completed in {episode_time:.2f}s, {len(result.nodes)} nodes, {len(result.edges)} edges")
 
         # 转换为兼容格式
         return GraphitiEpisodeData(

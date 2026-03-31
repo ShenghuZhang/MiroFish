@@ -409,41 +409,47 @@ def build_graph():
                 # 添加文本（progress_callback 签名是 (msg, progress_ratio)）
                 def add_progress_callback(msg, progress_ratio):
                     progress = 15 + int(progress_ratio * 40)  # 15% - 55%
+                    build_logger.debug(f"[{task_id}] add_progress_callback: {msg}, ratio={progress_ratio}, progress={progress}")
                     task_manager.update_task(
                         task_id,
                         message=msg,
                         progress=progress
                     )
-                
+
                 task_manager.update_task(
                     task_id,
                     message=f"开始添加 {total_chunks} 个文本块...",
                     progress=15
                 )
-                
+
+                build_logger.info(f"[{task_id}] Calling add_text_batches with {total_chunks} chunks")
                 episode_uuids = builder.add_text_batches(
-                    graph_id, 
+                    graph_id,
                     chunks,
                     batch_size=3,
                     progress_callback=add_progress_callback
                 )
-                
+                build_logger.info(f"[{task_id}] add_text_batches completed, got {len(episode_uuids)} episodes")
+
                 # 等待Zep处理完成（查询每个episode的processed状态）
                 task_manager.update_task(
                     task_id,
                     message="等待Zep处理数据...",
                     progress=55
                 )
-                
+
                 def wait_progress_callback(msg, progress_ratio):
                     progress = 55 + int(progress_ratio * 35)  # 55% - 90%
+                    build_logger.debug(f"[{task_id}] wait_progress_callback: {msg}, ratio={progress_ratio}, progress={progress}")
                     task_manager.update_task(
                         task_id,
                         message=msg,
                         progress=progress
                     )
-                
+
+                build_logger.info(f"[{task_id}] Calling _wait_for_episodes")
                 builder._wait_for_episodes(episode_uuids, wait_progress_callback)
+                build_logger.info(f"[{task_id}] _wait_for_episodes completed")
                 
                 # 获取图谱数据
                 task_manager.update_task(
@@ -521,13 +527,57 @@ def get_task(task_id: str):
     查询任务状态
     """
     task = TaskManager().get_task(task_id)
-    
+
+    # 如果任务不在内存中（例如服务器重启后），尝试从项目状态恢复
     if not task:
+        # 查找包含此 task_id 的项目
+        projects = ProjectManager.list_projects(limit=1000)
+        for project in projects:
+            if project.graph_build_task_id == task_id:
+                # 根据项目状态重构任务对象
+                from ..models.task import Task, TaskStatus as TaskTaskStatus
+                from datetime import datetime
+
+                # 根据项目状态确定任务状态
+                if project.status == ProjectStatus.GRAPH_BUILDING:
+                    status = TaskTaskStatus.PROCESSING
+                    message = "图谱构建中"
+                elif project.status == ProjectStatus.GRAPH_COMPLETED:
+                    status = TaskTaskStatus.COMPLETED
+                    message = "图谱构建完成"
+                elif project.status == ProjectStatus.FAILED:
+                    status = TaskTaskStatus.FAILED
+                    message = f"构建失败: {project.error or '未知错误'}"
+                else:
+                    status = TaskTaskStatus.PENDING
+                    message = "任务状态未知"
+
+                # 创建临时任务对象
+                recovered_task = Task(
+                    task_id=task_id,
+                    task_type="构建图谱",
+                    status=status,
+                    created_at=datetime.fromisoformat(project.created_at) if isinstance(project.created_at, str) else project.created_at,
+                    updated_at=datetime.fromisoformat(project.updated_at) if isinstance(project.updated_at, str) else project.updated_at,
+                    progress=100 if status == TaskTaskStatus.COMPLETED else (0 if status == TaskTaskStatus.PENDING else 50),
+                    message=message,
+                    result={
+                        "project_id": project.project_id,
+                        "graph_id": project.graph_id
+                    } if status == TaskTaskStatus.COMPLETED else None,
+                    error=project.error if status == TaskTaskStatus.FAILED else None
+                )
+
+                return jsonify({
+                    "success": True,
+                    "data": recovered_task.to_dict()
+                })
+
         return jsonify({
             "success": False,
             "error": f"任务不存在: {task_id}"
         }), 404
-    
+
     return jsonify({
         "success": True,
         "data": task.to_dict()

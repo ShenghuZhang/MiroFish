@@ -237,8 +237,12 @@ class GraphBuilderService:
         - 返回 episode uuid 列表
         - Episode 立即可用，无需等待 processed
         """
+        import logging
+        logger = logging.getLogger(__name__)
         episode_uuids = []
         total_chunks = len(chunks)
+
+        logger.info(f"add_text_batches: Starting with {total_chunks} chunks, batch_size={batch_size}")
 
         for i in range(0, total_chunks, batch_size):
             batch_chunks = chunks[i:i + batch_size]
@@ -254,6 +258,7 @@ class GraphBuilderService:
 
             # 发送到 Graphiti（graph_add_batch expects List[str], not GraphitiEpisodeData objects）
             try:
+                logger.debug(f"add_text_batches: Processing batch {batch_num}/{total_batches}")
                 batch_result = self.client.graph_add_batch(graph_id, batch_chunks, entity_types=self._entity_types)
 
                 # 收集返回的 episode uuid
@@ -262,15 +267,22 @@ class GraphBuilderService:
                         # Graphiti 返回 GraphitiEpisodeData 对象，直接访问 uuid 属性
                         episode_uuid = result.uuid
                         episode_uuids.append(episode_uuid)
+                    logger.debug(f"add_text_batches: Batch {batch_num} returned {len(batch_result)} episodes")
+                else:
+                    logger.warning(f"add_text_batches: Batch {batch_num} returned unexpected result: {type(batch_result)}")
 
                 # 避免请求过快
                 time.sleep(1)
 
             except Exception as e:
+                import traceback
+                logger.error(f"add_text_batches: Error in batch {batch_num}: {str(e)}")
+                logger.debug(traceback.format_exc())
                 if progress_callback:
                     progress_callback(f"批次 {batch_num} 发送失败: {str(e)}", 0)
                 raise
 
+        logger.info(f"add_text_batches: Completed {len(episode_uuids)} episodes")
         return episode_uuids
 
     def _wait_for_episodes(
@@ -287,6 +299,10 @@ class GraphBuilderService:
         - 不需要等待 processed 状态
         - 此方法保留用于兼容，直接返回
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"_wait_for_episodes: Called with {len(episode_uuids)} episodes")
+
         if not episode_uuids:
             if progress_callback:
                 progress_callback("无需等待（没有 episode）", 1.0)
@@ -300,6 +316,8 @@ class GraphBuilderService:
                 f"处理完成: {total_episodes}/{total_episodes}",
                 1.0
             )
+
+        logger.info(f"_wait_for_episodes: Completed")
 
     def _get_graph_info(self, graph_id: str) -> GraphInfo:
         """获取图谱信息"""
