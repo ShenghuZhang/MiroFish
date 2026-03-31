@@ -3,7 +3,7 @@
 """
 
 from .ontology_generator import OntologyGenerator
-from .graph_builder import GraphBuilderService
+from .graph_builder_graphiti import GraphBuilderService
 from .text_processor import TextProcessor
 from .zep_entity_reader import ZepEntityReader, EntityNode, FilteredEntities
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile

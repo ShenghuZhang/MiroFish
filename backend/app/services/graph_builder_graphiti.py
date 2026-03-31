@@ -11,9 +11,29 @@ import threading
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass
 
-from .graphiti_wrapper import GraphitiClient, GraphitiNode, GraphitiEdge, GraphInfo, run_async
+from .graphiti_wrapper import GraphitiClient, GraphitiNode, GraphitiEdge, run_async
 from ..config import Config
 from ..models.task import TaskManager, TaskStatus
+from dataclasses import field
+
+
+@dataclass
+class GraphInfo:
+    """图谱信息"""
+    graph_id: str
+    node_count: int
+    edge_count: int
+    entity_types: List[str]
+    episode_count: int = field(default=0)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "graph_id": self.graph_id,
+            "node_count": self.node_count,
+            "edge_count": self.edge_count,
+            "entity_types": self.entity_types,
+            "episode_count": self.episode_count,
+        }
 
 
 class GraphBuilderService:
@@ -37,6 +57,7 @@ class GraphBuilderService:
         # 使用 Graphiti 客户端（内部已处理 Neo4j 连接）
         self.client = GraphitiClient()
         self.task_manager = TaskManager()
+        self._entity_types = None  # Store entity_types from ontology
 
     def build_graph_async(
         self,
@@ -111,12 +132,11 @@ class GraphBuilderService:
             )
 
             # 2. 设置本体
-            # Graphiti: 本体在添加 episode 时传递
-            # 这里先保存到任务元数据，实际使用时读取
+            self.set_ontology(graph_id, ontology)
             self.task_manager.update_task(
                 task_id,
                 progress=15,
-                message="本体已准备"
+                message="本体已设置"
             )
 
             # 3. 文本分块
@@ -186,10 +206,22 @@ class GraphBuilderService:
 
         Graphiti 的本体通过 entity_types 参数在 add_episode 时传递
         这里保存到实例中，供添加数据时使用
+
+        Args:
+            graph_id: Graph ID
+            ontology: Ontology dict with entity_types list
         """
         # 保存到实例中
         self._current_ontology = ontology
         self._current_graph_id = graph_id
+
+        # Convert entity_types to Pydantic BaseModel classes
+        from .graphiti_wrapper import ontology_to_pydantic_models
+        import logging
+        logger = logging.getLogger(__name__)
+        self._entity_types = ontology_to_pydantic_models(ontology)
+        logger.info(f"set_ontology: Converted {len(ontology.get('entity_types', []))} entity types to Pydantic models")
+        logger.info(f"  Entity types: {list(self._entity_types.keys())}")
 
     def add_text_batches(
         self,
@@ -205,8 +237,6 @@ class GraphBuilderService:
         - 返回 episode uuid 列表
         - Episode 立即可用，无需等待 processed
         """
-        from .graphiti_wrapper import GraphitiEpisodeData
-
         episode_uuids = []
         total_chunks = len(chunks)
 
@@ -222,18 +252,15 @@ class GraphBuilderService:
                     progress
                 )
 
-            # 构建episode数据
-            episodes = [GraphitiEpisodeData(data=chunk, type="text") for chunk in batch_chunks]
-
-            # 发送到 Graphiti
+            # 发送到 Graphiti（graph_add_batch expects List[str], not GraphitiEpisodeData objects）
             try:
-                batch_result = self.client.graph_add_batch(graph_id, episodes)
+                batch_result = self.client.graph_add_batch(graph_id, batch_chunks, entity_types=self._entity_types)
 
                 # 收集返回的 episode uuid
                 if batch_result and isinstance(batch_result, list):
                     for result in batch_result:
-                        # Graphiti 返回 AddEpisodeResults，包含 episode 对象
-                        episode_uuid = result.episode.uuid
+                        # Graphiti 返回 GraphitiEpisodeData 对象，直接访问 uuid 属性
+                        episode_uuid = result.uuid
                         episode_uuids.append(episode_uuid)
 
                 # 避免请求过快
@@ -334,7 +361,7 @@ class GraphBuilderService:
                 "labels": node.labels or [],
                 "summary": node.summary or "",
                 "attributes": node.attributes or {},
-                "created_at": created_at,
+                "created_at": str(created_at) if created_at else None,
             })
 
         edges_data = []
@@ -361,10 +388,10 @@ class GraphBuilderService:
                 "source_node_name": node_map.get(edge.source_node_uuid, ""),
                 "target_node_name": node_map.get(edge.target_node_uuid, ""),
                 "attributes": edge.attributes or {},
-                "created_at": created_at,
-                "valid_at": valid_at,
-                "invalid_at": invalid_at,
-                "expired_at": expired_at,
+                "created_at": str(created_at) if created_at else None,
+                "valid_at": str(valid_at) if valid_at else None,
+                "invalid_at": str(invalid_at) if invalid_at else None,
+                "expired_at": str(expired_at) if expired_at else None,
                 "episodes": episodes or [],
             })
 

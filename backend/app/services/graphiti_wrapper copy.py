@@ -16,6 +16,7 @@ from graphiti_core.llm_client import OpenAIClient
 from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.embedder import OpenAIEmbedder
 from graphiti_core.embedder.openai import OpenAIEmbedderConfig
+from pydantic import BaseModel as PydanticBaseModel, Field
 
 # Custom LLM client for structured output compatibility
 from .graphiti_llm_client import LangChainStructuredLLMClient
@@ -36,7 +37,7 @@ from graphiti_core.utils.maintenance.graph_data_operations import build_indices_
 from ..config import Config
 
 
-def ontology_to_pydantic_models(ontology: Dict[str, Any]) -> Dict[str, type]:
+def ontology_to_pydantic_models(ontology: Dict[str, Any]) -> Dict[str, PydanticBaseModel]:
     """
     Convert ontology entity_types dict to Pydantic BaseModel classes for Graphiti
 
@@ -46,31 +47,26 @@ def ontology_to_pydantic_models(ontology: Dict[str, Any]) -> Dict[str, type]:
     Returns:
         Dict mapping entity type names to Pydantic BaseModel classes
     """
-    from pydantic import BaseModel as PydanticBaseModel, Field, create_model, ConfigDict
-
-
-
+    entity_types = {}
     entity_models = {}
 
     for entity_def in ontology.get("entity_types", []):
         name = entity_def["name"]
         description = entity_def.get("description", f"A {name} entity.")
 
-        # Build Pydantic model fields - use Field with type annotation
+        # Build Pydantic model fields
         fields = {}
         for attr in entity_def.get("attributes", []):
             attr_name = attr["name"]
             attr_desc = attr.get("description", attr_name)
             fields[attr_name] = (Optional[str], Field(description=attr_desc, default=None))
 
-        # Create Pydantic model dynamically using create_model
-        entity_model = create_model(
-            name,
-            __base__=PydanticBaseModel,
-            __doc__=description,
-            __config__=ConfigDict(arbitrary_types_allowed=True),
-            **fields  # Pass fields directly as dict
+        # Create Pydantic model dynamically
+        # Graphiti's EntityModel expects a certain structure, we'll create simple models
+            **fields
         )
+        entity_model.__name__ = name
+        entity_model.__doc__ = description
         entity_models[name] = entity_model
 
     return entity_models
@@ -371,20 +367,12 @@ class GraphitiClient:
         self,
         graph_id: str,
         data: str,
-        type: str = "text",
-        entity_types: Optional[Dict[str, type]] = None
+        type: str = "text"
     ) -> GraphitiEpisodeData:
         """
         添加内容到图谱
 
-        Args:
-            graph_id: Graph ID
-            data: Episode content
-            type: Content type (unused in Graphiti)
-            entity_types: Pydantic BaseModel classes for entity type definitions
-
-        Returns:
-            包含节点和边的 Episode 数据
+        返回包含节点和边的 Episode 数据
         """
         graphiti = self._get_graphiti()
 
@@ -392,18 +380,12 @@ class GraphitiClient:
         reference_time = datetime.now()
 
         # 调用 Graphiti 的 add_episode 方法
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.debug(f"graph_add called with entity_types: {entity_types is not None}")
-        if entity_types:
-            logger.debug(f"  entity_types keys: {list(entity_types.keys())}")
         result = run_async(graphiti.add_episode(
             name="Episode",
             episode_body=data,
             reference_time=reference_time,
             source_description="Graph addition",
-            group_id=graph_id,
-            entity_types=entity_types
+            group_id=graph_id
         ))
 
         # 转换为兼容格式
@@ -434,20 +416,14 @@ class GraphitiClient:
     def graph_add_batch(
         self,
         graph_id: str,
-        episodes: List[str],
-        entity_types: Optional[Dict[str, type]] = None
+        episodes: List[str]
     ) -> List[GraphitiEpisodeData]:
         """
         批量添加内容到图谱
-
-        Args:
-            graph_id: Graph ID
-            episodes: List of episode content strings
-            entity_types: Pydantic BaseModel classes for entity type definitions
         """
         results = []
         for episode_data in episodes:
-            result = self.graph_add(graph_id, episode_data, entity_types=entity_types)
+            result = self.graph_add(graph_id, episode_data)
             results.append(result)
         return results
 
@@ -689,13 +665,12 @@ class _ZepGraphInterface:
         self._client = client
         self.node = _ZepNodeInterface(client)
 
-    def add(self, graph_id: str, data: str, type: str = "text", entity_types: Optional[Dict[str, type]] = None) -> GraphitiEpisodeData:
+    def add(self, graph_id: str, data: str, type: str = "text") -> GraphitiEpisodeData:
         """添加数据到图谱"""
         return self._client.graph_add(
             graph_id=graph_id,
             data=data,
-            type=type,
-            entity_types=entity_types
+            type=type
         )
 
     def search(
@@ -756,13 +731,12 @@ class Zep:
         """删除图谱（别名）"""
         self._graphiti_client.graph_delete(graph_id)
 
-    def graph_add(self, graph_id: str, data: str, type: str = "text", entity_types: Optional[Dict[str, type]] = None) -> GraphitiEpisodeData:
+    def graph_add(self, graph_id: str, data: str, type: str = "text") -> GraphitiEpisodeData:
         """添加数据到图谱（直接调用）"""
         return self._graphiti_client.graph_add(
             graph_id=graph_id,
             data=data,
-            type=type,
-            entity_types=entity_types
+            type=type
         )
 
     def graph_search(

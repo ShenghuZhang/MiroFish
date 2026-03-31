@@ -141,7 +141,7 @@ def test_imports():
         print("✓ 成功导入 zep_paging")
 
         # 测试 graph_builder 导入
-        from app.services.graph_builder import GraphBuilderService
+        from app.services.graph_builder_graphiti import GraphBuilderService
         print("✓ 成功导入 graph_builder")
 
         print("✓ 所有导入测试通过")
