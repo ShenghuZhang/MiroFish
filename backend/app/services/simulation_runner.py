@@ -338,10 +338,10 @@ class SimulationRunner:
         # 加载模拟配置
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
         config_path = os.path.join(sim_dir, "simulation_config.json")
-        
+
         if not os.path.exists(config_path):
             raise ValueError(f"模拟配置不存在，请先调用 /prepare 接口")
-        
+
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
         
@@ -425,13 +425,24 @@ class SimulationRunner:
             # 创建主日志文件，避免 stdout/stderr 管道缓冲区满导致进程阻塞
             main_log_path = os.path.join(sim_dir, "simulation.log")
             main_log_file = open(main_log_path, 'w', encoding='utf-8')
-            
+
             # 设置子进程环境变量，确保 Windows 上使用 UTF-8 编码
             # 这可以修复第三方库（如 OASIS）读取文件时未指定编码的问题
             env = os.environ.copy()
             env['PYTHONUTF8'] = '1'  # Python 3.7+ 支持，让所有 open() 默认使用 UTF-8
             env['PYTHONIOENCODING'] = 'utf-8'  # 确保 stdout/stderr 使用 UTF-8
-            
+
+            logger.info(f"启动模拟进程: {simulation_id}")
+            logger.info(f"  - Platform: {platform}")
+            logger.info(f"  - Script: {script_name}")
+            logger.info(f"  - Config: {config_path}")
+            logger.info(f"  - Total rounds: {total_rounds}")
+            logger.info(f"  - Max rounds: {max_rounds}")
+            logger.info(f"  - Working dir: {sim_dir}")
+            logger.debug(f"  - Command: {' '.join(cmd)}")
+            logger.debug(f"  - PYTHONUTF8: {env.get('PYTHONUTF8')}")
+            logger.debug(f"  - PYTHONIOENCODING: {env.get('PYTHONIOENCODING')}")
+
             # 设置工作目录为模拟目录（数据库等文件会生成在此）
             # 使用 start_new_session=True 创建新的进程组，确保可以通过 os.killpg 终止所有子进程
             process = subprocess.Popen(
@@ -445,16 +456,16 @@ class SimulationRunner:
                 env=env,  # 传递带有 UTF-8 设置的环境变量
                 start_new_session=True,  # 创建新进程组，确保服务器关闭时能终止所有相关进程
             )
-            
+
             # 保存文件句柄以便后续关闭
             cls._stdout_files[simulation_id] = main_log_file
             cls._stderr_files[simulation_id] = None  # 不再需要单独的 stderr
-            
+
             state.process_pid = process.pid
             state.runner_status = RunnerStatus.RUNNING
             cls._processes[simulation_id] = process
             cls._save_run_state(state)
-            
+
             # 启动监控线程
             monitor_thread = threading.Thread(
                 target=cls._monitor_simulation,
@@ -463,8 +474,10 @@ class SimulationRunner:
             )
             monitor_thread.start()
             cls._monitor_threads[simulation_id] = monitor_thread
-            
+
             logger.info(f"模拟启动成功: {simulation_id}, pid={process.pid}, platform={platform}")
+            logger.info(f"  - 日志文件: {main_log_path}")
+            logger.info(f"  - 监控线程已启动")
             
         except Exception as e:
             state.runner_status = RunnerStatus.FAILED

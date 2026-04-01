@@ -10,10 +10,10 @@ Zep检索工具服务
 
 import time
 import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass, field
 
-from zep_cloud.client import Zep
+from .graphiti_wrapper import Zep
 
 from ..config import Config
 from ..utils.logger import get_logger
@@ -420,13 +420,11 @@ class ZepToolsService:
     # 重试配置
     MAX_RETRIES = 3
     RETRY_DELAY = 2.0
-    
+
     def __init__(self, api_key: Optional[str] = None, llm_client: Optional[LLMClient] = None):
-        self.api_key = api_key or Config.ZEP_API_KEY
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY 未配置")
-        
-        self.client = Zep(api_key=self.api_key)
+        # Graphiti 使用 Neo4j 配置，不再需要 ZEP_API_KEY
+        # 兼容性：保持构造函数签名，但忽略 api_key 参数
+        self.client = Zep()  # Zep 兼容包装器，内部使用 Graphiti
         # LLM客户端用于InsightForge生成子问题
         self._llm_client = llm_client
         logger.info("ZepToolsService 初始化完成")

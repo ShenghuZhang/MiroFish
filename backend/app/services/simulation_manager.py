@@ -7,6 +7,7 @@ OASIS模拟管理器
 import os
 import json
 import shutil
+import math
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -381,24 +382,52 @@ class SimulationManager:
                 )
             
             # ========== 阶段3: LLM智能生成模拟配置 ==========
+            # 计算LLM调用次数：1次时间配置 + 1次事件配置 + N批Agent配置
+            num_batches = math.ceil(len(filtered.entities) / 15)  # AGENTS_PER_BATCH from SimulationConfigGenerator
+            num_llm_calls = 2 + num_batches  # 时间配置 + 事件配置 + N批Agent
+
             if progress_callback:
                 progress_callback(
-                    "generating_config", 0, 
+                    "generating_config", 0,
                     "正在分析模拟需求...",
                     current=0,
-                    total=3
+                    total=num_llm_calls
                 )
-            
+
             config_generator = SimulationConfigGenerator()
-            
+
+            # 创建带子步骤进度跟踪的回调
+            config_progress_state = {"completed_calls": 0}
+
+            def config_progress_with_substep(step: int, total_steps: int, message: str):
+                """配置生成子步骤进度回调，映射到总体进度"""
+                # 总体进度范围: 5% - 95%
+                stage_start, stage_end = 5, 95
+
+                # 计算当前LLM调用进度的总体百分比
+                if total_steps > 0:
+                    llm_progress = step / total_steps
+                else:
+                    llm_progress = 0
+
+                overall_progress = stage_start + (stage_end - stage_start) * llm_progress
+
+                if progress_callback:
+                    progress_callback(
+                        "generating_config", int(overall_progress),
+                        message,
+                        current=step,
+                        total=total_steps
+                    )
+
             if progress_callback:
                 progress_callback(
-                    "generating_config", 30, 
-                    "正在调用LLM生成配置...",
-                    current=1,
-                    total=3
+                    "generating_config", 5,
+                    "正在调用LLM生成时间配置...",
+                    current=0,
+                    total=num_llm_calls
                 )
-            
+
             sim_params = config_generator.generate_config(
                 simulation_id=simulation_id,
                 project_id=state.project_id,
@@ -407,15 +436,16 @@ class SimulationManager:
                 document_text=document_text,
                 entities=filtered.entities,
                 enable_twitter=state.enable_twitter,
-                enable_reddit=state.enable_reddit
+                enable_reddit=state.enable_reddit,
+                progress_callback=config_progress_with_substep
             )
-            
+
             if progress_callback:
                 progress_callback(
-                    "generating_config", 70, 
+                    "generating_config", 95,
                     "正在保存配置文件...",
-                    current=2,
-                    total=3
+                    current=num_llm_calls - 1,
+                    total=num_llm_calls
                 )
             
             # 保存配置文件

@@ -100,9 +100,18 @@ class Project:
 
 class ProjectManager:
     """项目管理器 - 负责项目的持久化存储和检索"""
-    
+
     # 项目存储根目录
     PROJECTS_DIR = os.path.join(Config.UPLOAD_FOLDER, 'projects')
+
+    # 状态映射表，用于字符串和枚举之间的转换
+    STATUS_MAP = {
+        'created': ProjectStatus.CREATED,
+        'ontology_generated': ProjectStatus.ONTOLOGY_GENERATED,
+        'graph_building': ProjectStatus.GRAPH_BUILDING,
+        'graph_completed': ProjectStatus.GRAPH_COMPLETED,
+        'failed': ProjectStatus.FAILED
+    }
     
     @classmethod
     def _ensure_projects_dir(cls):

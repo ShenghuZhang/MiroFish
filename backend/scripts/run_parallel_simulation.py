@@ -1123,9 +1123,14 @@ async def run_twitter_simulation(
         if main_logger:
             main_logger.info(f"[Twitter] {msg}")
         print(f"[Twitter] {msg}")
-    
+
+    def log_debug(msg):
+        if main_logger:
+            main_logger.debug(f"[Twitter] {msg}")
+
     log_info("初始化...")
-    
+    log_debug("开始加载 Twitter 模拟配置")
+
     # Twitter 使用通用 LLM 配置
     model = create_model(config, use_boost=False)
     
@@ -1140,13 +1145,17 @@ async def run_twitter_simulation(
         model=model,
         available_actions=TWITTER_ACTIONS,
     )
-    
+
+    log_debug(f"Twitter agent graph 生成完成")
+
     # 从配置文件获取 Agent 真实名称映射（使用 entity_name 而非默认的 Agent_X）
     agent_names = get_agent_names_from_config(config)
     # 如果配置中没有某个 agent，则使用 OASIS 的默认名称
     for agent_id, agent in result.agent_graph.get_agents():
         if agent_id not in agent_names:
             agent_names[agent_id] = getattr(agent, 'name', f'Agent_{agent_id}')
+
+    log_debug(f"已加载 {len(agent_names)} 个 Agent")
     
     db_path = os.path.join(simulation_dir, "twitter_simulation.db")
     if os.path.exists(db_path):
@@ -1231,25 +1240,31 @@ async def run_twitter_simulation(
             if main_logger:
                 main_logger.info(f"收到退出信号，在第 {round_num + 1} 轮停止模拟")
             break
-        
+
         simulated_minutes = round_num * minutes_per_round
         simulated_hour = (simulated_minutes // 60) % 24
         simulated_day = simulated_minutes // (60 * 24) + 1
-        
+
         active_agents = get_active_agents_for_round(
             result.env, config, simulated_hour, round_num
         )
-        
+
+        # 记录轮次进度
+        if main_logger:
+            main_logger.round_progress("Twitter", round_num + 1, total_rounds, len(active_agents))
+
         # 无论是否有活跃agent，都记录round开始
         if action_logger:
             action_logger.log_round_start(round_num + 1, simulated_hour)
-        
+
         if not active_agents:
             # 没有活跃agent时也记录round结束（actions_count=0）
             if action_logger:
                 action_logger.log_round_end(round_num + 1, 0)
+            if main_logger:
+                main_logger.debug(f"[Twitter] Round {round_num + 1}: 无活跃Agent")
             continue
-        
+
         actions = {agent: LLMAction() for _, agent in active_agents}
         await result.env.step(actions)
         
@@ -1315,12 +1330,18 @@ async def run_reddit_simulation(
         if main_logger:
             main_logger.info(f"[Reddit] {msg}")
         print(f"[Reddit] {msg}")
-    
+
+    def log_debug(msg):
+        if main_logger:
+            main_logger.debug(f"[Reddit] {msg}")
+        print(f"[Reddit] DEBUG: {msg}")
+
     log_info("初始化...")
-    
+    log_debug("开始加载 Reddit 模拟配置")
+
     # Reddit 使用加速 LLM 配置（如果有的话，否则回退到通用配置）
     model = create_model(config, use_boost=True)
-    
+
     profile_path = os.path.join(simulation_dir, "reddit_profiles.json")
     if not os.path.exists(profile_path):
         log_info(f"错误: Profile文件不存在: {profile_path}")
@@ -1430,25 +1451,31 @@ async def run_reddit_simulation(
             if main_logger:
                 main_logger.info(f"收到退出信号，在第 {round_num + 1} 轮停止模拟")
             break
-        
+
         simulated_minutes = round_num * minutes_per_round
         simulated_hour = (simulated_minutes // 60) % 24
         simulated_day = simulated_minutes // (60 * 24) + 1
-        
+
         active_agents = get_active_agents_for_round(
             result.env, config, simulated_hour, round_num
         )
-        
+
+        # 记录轮次进度
+        if main_logger:
+            main_logger.round_progress("Twitter", round_num + 1, total_rounds, len(active_agents))
+
         # 无论是否有活跃agent，都记录round开始
         if action_logger:
             action_logger.log_round_start(round_num + 1, simulated_hour)
-        
+
         if not active_agents:
             # 没有活跃agent时也记录round结束（actions_count=0）
             if action_logger:
                 action_logger.log_round_end(round_num + 1, 0)
+            if main_logger:
+                main_logger.debug(f"[Twitter] Round {round_num + 1}: 无活跃Agent")
             continue
-        
+
         actions = {agent: LLMAction() for _, agent in active_agents}
         await result.env.step(actions)
         
@@ -1548,12 +1575,15 @@ async def main():
     log_manager.info(f"模拟ID: {config.get('simulation_id', 'unknown')}")
     log_manager.info(f"等待命令模式: {'启用' if wait_for_commands else '禁用'}")
     log_manager.info("=" * 60)
-    
+
+    # 记录详细的配置信息
+    log_manager.config_detail(config)
+
     time_config = config.get("time_config", {})
     total_hours = time_config.get('total_simulation_hours', 72)
     minutes_per_round = time_config.get('minutes_per_round', 30)
     config_total_rounds = (total_hours * 60) // minutes_per_round
-    
+
     log_manager.info(f"模拟参数:")
     log_manager.info(f"  - 总模拟时长: {total_hours}小时")
     log_manager.info(f"  - 每轮时间: {minutes_per_round}分钟")
@@ -1563,7 +1593,7 @@ async def main():
         if args.max_rounds < config_total_rounds:
             log_manager.info(f"  - 实际执行轮数: {args.max_rounds} (已截断)")
     log_manager.info(f"  - Agent数量: {len(config.get('agent_configs', []))}")
-    
+
     log_manager.info("日志结构:")
     log_manager.info(f"  - 主日志: simulation.log")
     log_manager.info(f"  - Twitter动作: twitter/actions.jsonl")
@@ -1571,23 +1601,50 @@ async def main():
     log_manager.info("=" * 60)
     
     start_time = datetime.now()
-    
+
     # 存储两个平台的模拟结果
     twitter_result: Optional[PlatformSimulation] = None
     reddit_result: Optional[PlatformSimulation] = None
-    
+
+    # 计算实际轮数
+    actual_rounds = min(config_total_rounds, args.max_rounds) if args.max_rounds else config_total_rounds
+
+    log_manager.info("")
+    log_manager.info("=" * 60)
+    log_manager.info("开始并行模拟")
+    log_manager.info("=" * 60)
+
     if args.twitter_only:
+        log_manager.info("执行模式: Twitter Only")
+        log_manager.platform_start("Twitter", actual_rounds)
         twitter_result = await run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds)
+        if twitter_result:
+            log_manager.platform_complete("Twitter", twitter_result.total_actions, actual_rounds)
     elif args.reddit_only:
+        log_manager.info("执行模式: Reddit Only")
+        log_manager.platform_start("Reddit", actual_rounds)
         reddit_result = await run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds)
+        if reddit_result:
+            log_manager.platform_complete("Reddit", reddit_result.total_actions, actual_rounds)
     else:
+        log_manager.info("执行模式: Twitter + Reddit 并行")
+        log_manager.platform_start("Twitter", actual_rounds)
+        log_manager.platform_start("Reddit", actual_rounds)
+        log_manager.info("启动 Twitter 模拟...")
+        log_manager.info("启动 Reddit 模拟...")
         # 并行运行（每个平台使用独立的日志记录器）
         results = await asyncio.gather(
             run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds),
             run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds),
         )
         twitter_result, reddit_result = results
-    
+        log_manager.info(f"Twitter 模拟完成: {twitter_result is not None}")
+        log_manager.info(f"Reddit 模拟完成: {reddit_result is not None}")
+        if twitter_result:
+            log_manager.platform_complete("Twitter", twitter_result.total_actions, actual_rounds)
+        if reddit_result:
+            log_manager.platform_complete("Reddit", reddit_result.total_actions, actual_rounds)
+
     total_elapsed = (datetime.now() - start_time).total_seconds()
     log_manager.info("=" * 60)
     log_manager.info(f"模拟循环完成! 总耗时: {total_elapsed:.1f}秒")

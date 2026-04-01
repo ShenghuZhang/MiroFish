@@ -193,7 +193,42 @@ class SimulationLogManager:
         self.log(message, "error")
     
     def debug(self, message: str):
+        """记录调试日志"""
         self.log(message, "debug")
+
+    def round_progress(self, platform: str, round_num: int, total_rounds: int, active_agents: int):
+        """记录轮次进度"""
+        msg = f"[{platform}] Round {round_num}/{total_rounds} - Active agents: {active_agents}"
+        self.log(msg, "info")
+
+    def agent_action_detail(self, platform: str, round_num: int, agent_id: int, action_type: str):
+        """记录Agent动作详情"""
+        msg = f"[{platform}] Round {round_num} - Agent {agent_id} - {action_type}"
+        self.log(msg, "debug")
+
+    def config_detail(self, config: Dict[str, Any]):
+        """记录配置详情"""
+        self.info("配置详情:")
+        self.info(f"  - 模拟ID: {config.get('simulation_id')}")
+        self.info(f"  - 时间配置: {config.get('time_config', {})}")
+        self.info(f"  - Agent数量: {len(config.get('agent_configs', []))}")
+
+    def platform_start(self, platform: str, max_rounds: int):
+        """记录平台模拟开始"""
+        self.info(f"开始 {platform} 模拟")
+        self.info(f"  - 最大轮数: {max_rounds}")
+
+    def platform_complete(self, platform: str, total_rounds: int, total_actions: int):
+        """记录平台模拟完成"""
+        self.info(f"{platform} 模拟完成")
+        self.info(f"  - 实际轮数: {total_rounds}")
+        self.info(f"  - 总动作数: {total_actions}")
+
+    def error_detail(self, message: str, exc_info: str = None):
+        """记录详细错误信息"""
+        self.error(message)
+        if exc_info:
+            self.error(f"错误详情: {exc_info}")
 
 
 # ============ 兼容旧接口 ============
